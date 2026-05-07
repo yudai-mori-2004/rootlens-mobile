@@ -1,0 +1,16 @@
+1<?xml version="1.0" encoding="utf-8"?>
+2<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+3    package="io.rootlens.sensorsession" >
+4
+5    <uses-sdk android:minSdkVersion="24" />
+6
+7    <!-- v0.1.1 Task 02: 抽象センサー層 -->
+8    <!-- Camera は app 側 manifest で既に android.permission.CAMERA を宣言済み (Phase 5 で確認) -->
+9
+10
+11    <!-- Phase 3 で IMU 200Hz 超 sampling 用に必要 (Android 12+) -->
+12    <uses-permission android:name="android.permission.HIGH_SAMPLING_RATE_SENSORS" />
+12-->/Users/forest/WebCreations/rootlens-mobile/app/modules/sensor-session/android/src/main/AndroidManifest.xml:8:3-83
+12-->/Users/forest/WebCreations/rootlens-mobile/app/modules/sensor-session/android/src/main/AndroidManifest.xml:8:20-80
+13
+14</manifest>

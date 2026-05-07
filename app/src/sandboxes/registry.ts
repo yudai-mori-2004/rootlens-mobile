@@ -1,4 +1,5 @@
 import type { ComponentType } from 'react';
+import SensorSessionTestScreen from './04-sensor-session/SensorSessionTestScreen';
 
 export interface SandboxEntry {
   id: string;
@@ -7,5 +8,11 @@ export interface SandboxEntry {
   screen: ComponentType<any>;
 }
 
-// Empty until v0.0.1 task 06 (collection-flow on top of sensor-session) lands.
-export const sandboxes: SandboxEntry[] = [];
+export const sandboxes: SandboxEntry[] = [
+  {
+    id: '04-sensor-session',
+    title: '04: SensorSession',
+    description: 'Camera + IMU 同時取得 + mp4 出力 (raw signals for server-side VIO)',
+    screen: SensorSessionTestScreen,
+  },
+];
