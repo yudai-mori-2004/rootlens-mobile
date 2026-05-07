@@ -1,0 +1,20 @@
+{
+  "expo": {
+    "name": "RootLens",
+    "slug": "rootlens-mobile",
+    "scheme": "io.rootlens.app",
+    "version": "0.0.1",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": true,
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "io.rootlens.app",
+      "buildNumber": "1"
+    },
+    "android": {
+      "package": "io.rootlens.app",
+      "versionCode": 1
+    }
+  }
+}

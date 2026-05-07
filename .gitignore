@@ -1,0 +1,36 @@
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Dependencies
+node_modules/
+
+# React Native (Expo)
+app/ios/Pods/
+app/ios/build/
+app/android/.gradle/
+app/android/app/build/
+app/android/build/
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+*.orig.*
+*.hprof
+
+# Misc
+*.tsbuildinfo
+.expo/
+.claude/
