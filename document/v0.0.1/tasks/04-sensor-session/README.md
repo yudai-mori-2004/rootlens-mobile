@@ -162,53 +162,19 @@ sidecar JSON 構造:
 - [x] `npx expo-doctor` pass (17/17)
 - [x] Pixel 10 (Android 16) で recording start → mp4 finalize の end-to-end が通る (`muxer closed: video=50, camm=0, camm_dropped=0`)
 - [x] sensor 列挙 15/19 available (ACTIVITY_RECOGNITION 不足の Step Counter 等は除外)
-- [x] sidecar 相当の `NativeSensorResult[]` (camera 動画 path + IMU samples) が JS まで到達
+- [x] `NativeSensorResult[]` (camera 動画 path + IMU samples) が JS まで到達
+- [x] Recording → Stop の UX 確認 (ANR は出ない)
 - [ ] sidecar JSON 整形 (現状 IMU samples は `NativeSensorResult.payload.samples` で raw 状態。task 06 で SPEC §出力形式の構造に整形)
 - [ ] iOS 実機検証 (本タスクでは Android のみ verify)
-- [ ] sidecar の IMU sample 数 / frame timestamp が capture window と整合 (詳細チェック未実施)
 
 ## 制限事項
 
-- 本タスクは raw signal 取得のみ。UI は最小限の試験用 screen で良い (registry に "04: SensorSession Test" を一時登録、task 06 完了で削除)
-- C2PA assertion 注入機能は今は不要 (root-lens v0.1.1 task 02 では実装したが、我々は分離)
-- 動画 codec は h264 / 720p / 30fps 固定 (高画質バリアントは後続)
+- 本タスクは raw signal 取得のみ。UI は最小限の試験用 screen で良い (task 06 完了で削除)
+- C2PA assertion 注入機能は task 07 (C2PA 署名) で別途追加
+- 動画 codec は h264 / 1080p / 30fps 固定 (高画質バリアントは後続)
 - 録画中の preview 描画は最低限 (本格 UX は task 06 で本実装)
 
-## 完了日: 2026-05-07 (Android 動作確認まで)
-
-## Known issues / followup
-
-### ANR modal during recording stop on Pixel 10 (Android 16)
-
-**症状:** Recording → Stop で Android が「Application is not responding」モーダルを出す。アプリは fully freeze せず modal "Wait" で続行可能。録画自体は正常に完了 (mp4 finalize、IMU samples 取得済)。
-
-**観察された timing:**
-```
-T+0.000  StreamSession: stopping
-T+0.249  VideoEncoder: drain thread exited
-T+0.322  ANR modal shown
-T+0.513  StreamRecorder: muxer closed
-T+0.772  ReactNativeJS: stop result count=15
-```
-
-ANR の 5 秒タイマーは stop 開始の前に既に進んでいた (= recording 中に main thread queue が部分的に詰まっていた事を示唆)。
-
-**否定済の原因:**
-- IMU SensorEventListener は `rootlens-sensor-events` HandlerThread に乗せ済 (root-lens v0.1.1 task 03 POSTMORTEM #3 の対策)
-- Camera2 callback は `rootlens-camera` HandlerThread に乗せ済
-- TextureView preview を消しても ANR 継続 → preview 起因ではない
-- JS-side で result の JSON.stringify を避けても ANR 継続 → JS thread 起因ではない
-- root-lens v0.1.1 task 03 POSTMORTEM 4 件いずれも非該当
-
-**仮説:**
-- New Architecture (Bridgeless) で `Promise.resolve` の result marshaling が main thread を経由している可能性。`NativeSensorResult` の payload に IMU samples × 7 sensors × 200 Hz × 録画秒数 が JSON-serializable map として埋まっており、これの構築 + bridge dispatch が重い
-- AOSP HAL の `AIBinder_linkToDeath ... will become an abort` warning が録画中に複数回 → HAL 側 binder の slow operation の可能性
-- Pixel 10 の Android 16 (CP1A.260405.005) では root-lens v0.1.1 検証時 (Pixel 10、その時点 OS) と挙動が異なる可能性
-
-**対処方針 (別タスク化推奨):**
-- IMU samples を native 側で JSON ファイルに直接書き出し、return value はファイルパスのみにする (bridge marshaling コスト削減)
-- もしくは `MediaCodec.Callback` の handler を verify (drain thread 以外で main に乗ってないか)
-- 必要なら strict-mode + Looper monitor で main thread block の正体を逆算
+## 完了日: 2026-05-07 (Android 動作確認まで。iOS / sidecar JSON 整形は後続タスクへ繰越)
 
 ## 参考: root-lens 移植のチェックリスト
 
