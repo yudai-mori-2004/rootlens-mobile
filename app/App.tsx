@@ -11,9 +11,15 @@ import {
   Fraunces_500Medium,
   Fraunces_600SemiBold,
 } from '@expo-google-fonts/fraunces';
+import { PrivyProvider } from '@privy-io/expo';
+import { PrivyElements } from '@privy-io/expo/ui';
 
 import HomeScreen from './src/sandboxes/HomeScreen';
 import { sandboxes } from './src/sandboxes/registry';
+
+const ENV = process.env as Record<string, string | undefined>;
+const PRIVY_APP_ID = ENV.EXPO_PUBLIC_PRIVY_APP_ID ?? '';
+const PRIVY_CLIENT_ID = ENV.EXPO_PUBLIC_PRIVY_CLIENT_ID ?? '';
 
 export type SandboxStackParamList = {
   Home: undefined;
@@ -50,37 +56,50 @@ export default function App() {
   }
 
   return (
-    <SafeAreaProvider>
-      <NavigationContainer theme={appNavTheme}>
-        <Stack.Navigator
-          screenOptions={{
-            headerStyle: { backgroundColor: '#ffffff' },
-            headerTintColor: '#0a1f44',
-            headerTitleStyle: {
-              fontFamily: 'Fraunces_500Medium',
-              fontSize: 17,
-              color: '#0a1f44',
-            },
-            headerShadowVisible: false,
-            contentStyle: { backgroundColor: '#fafaf7' },
-          }}
-        >
-          <Stack.Screen
-            name="Home"
-            component={HomeScreen}
-            options={{ title: 'RootLens' }}
-          />
-          {sandboxes.map((s) => (
+    <PrivyProvider
+      appId={PRIVY_APP_ID}
+      clientId={PRIVY_CLIENT_ID}
+      config={{
+        embedded: {
+          solana: {
+            createOnLogin: 'users-without-wallets',
+          },
+        },
+      }}
+    >
+      <SafeAreaProvider>
+        <NavigationContainer theme={appNavTheme}>
+          <Stack.Navigator
+            screenOptions={{
+              headerStyle: { backgroundColor: '#ffffff' },
+              headerTintColor: '#0a1f44',
+              headerTitleStyle: {
+                fontFamily: 'Fraunces_500Medium',
+                fontSize: 17,
+                color: '#0a1f44',
+              },
+              headerShadowVisible: false,
+              contentStyle: { backgroundColor: '#fafaf7' },
+            }}
+          >
             <Stack.Screen
-              key={s.id}
-              name={s.id}
-              component={s.screen}
+              name="Home"
+              component={HomeScreen}
               options={{ title: 'RootLens' }}
             />
-          ))}
-        </Stack.Navigator>
-        <StatusBar style="dark" />
-      </NavigationContainer>
-    </SafeAreaProvider>
+            {sandboxes.map((s) => (
+              <Stack.Screen
+                key={s.id}
+                name={s.id}
+                component={s.screen}
+                options={{ title: 'RootLens' }}
+              />
+            ))}
+          </Stack.Navigator>
+          <StatusBar style="dark" />
+        </NavigationContainer>
+      </SafeAreaProvider>
+      <PrivyElements />
+    </PrivyProvider>
   );
 }

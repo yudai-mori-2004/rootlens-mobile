@@ -2,8 +2,10 @@ import React from 'react';
 import { FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import { useLoginWithOAuth } from '@privy-io/expo';
 import { sandboxes, type SandboxEntry } from './registry';
 import type { SandboxStackParamList } from '../../App';
+import { useAuth } from '../hooks/useAuth';
 
 // Top-level launcher for v0.1.2 sandboxes.
 // Light theme + navy ink to match the rest of the app. Editorial list style with hairline dividers.
@@ -46,15 +48,52 @@ export default function HomeScreen() {
   );
 }
 
-const Header: React.FC = () => (
-  <View style={styles.header}>
-    <Text style={styles.brand}>RootLens</Text>
-    <Text style={styles.eyebrow}>v0.1.2 · SANDBOX VERIFICATION</Text>
-    <Text style={styles.lede}>
-      Independently verifying each component of the Physical AI household-data collection pipeline before integration.
-    </Text>
-  </View>
-);
+const Header: React.FC = () => {
+  return (
+    <View style={styles.header}>
+      <Text style={styles.brand}>RootLens</Text>
+      <Text style={styles.eyebrow}>v0.0.1 · SANDBOX VERIFICATION</Text>
+      <Text style={styles.lede}>
+        Independently verifying each component of the Physical AI household-data collection pipeline before integration.
+      </Text>
+      <WalletTile />
+    </View>
+  );
+};
+
+const WalletTile: React.FC = () => {
+  const { isReady, isAuthenticated, address, logout } = useAuth();
+  const { login, state } = useLoginWithOAuth({
+    onError: (e) => console.warn('[Privy] OAuth login error', e),
+  });
+  const inFlight = state?.status === 'loading';
+
+  if (!isReady) return null;
+
+  if (!isAuthenticated) {
+    return (
+      <Pressable
+        style={({ pressed }) => [styles.walletTile, pressed && styles.walletTilePressed]}
+        disabled={inFlight}
+        onPress={() => { void login({ provider: 'google' }); }}
+      >
+        <Text style={styles.walletLabel}>{inFlight ? 'SIGNING IN…' : 'SIGN IN'}</Text>
+        <Text style={styles.walletValue}>Tap to connect Privy (Google) — enables TP registration</Text>
+      </Pressable>
+    );
+  }
+
+  const truncated = address ? `${address.slice(0, 4)}…${address.slice(-4)}` : '(no wallet)';
+  return (
+    <Pressable
+      style={({ pressed }) => [styles.walletTile, pressed && styles.walletTilePressed]}
+      onPress={() => logout()}
+    >
+      <Text style={styles.walletLabel}>SOLANA WALLET</Text>
+      <Text style={styles.walletValue}>{truncated} · tap to sign out</Text>
+    </Pressable>
+  );
+};
 
 const Row: React.FC<{ entry: SandboxEntry; index: number; onPress: () => void }> = ({
   entry, index, onPress,
@@ -150,5 +189,28 @@ const styles = StyleSheet.create({
     fontSize: 20,
     color: COLORS.ink,
     fontWeight: '300',
+  },
+  walletTile: {
+    marginTop: 16,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 4,
+    backgroundColor: COLORS.bgWhite,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    gap: 4,
+  },
+  walletTilePressed: { backgroundColor: '#f6f4ee' },
+  walletLabel: {
+    fontFamily: FONTS.mono,
+    fontSize: 10,
+    letterSpacing: 1.4,
+    color: COLORS.textMute,
+    fontWeight: '600',
+  },
+  walletValue: {
+    fontFamily: FONTS.mono,
+    fontSize: 12,
+    color: COLORS.textBody,
   },
 });

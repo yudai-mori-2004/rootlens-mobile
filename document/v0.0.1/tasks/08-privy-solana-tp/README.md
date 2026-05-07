@@ -32,11 +32,12 @@
 
 ## 設計
 
-### 鍵 / 認証
+### 鍵 / 認証 (重要: アプリ側で TP 用の鍵は管理しない)
 
-- Privy embedded Solana wallet で device 鍵を生成 (`createOnLogin: 'users-without-wallets'`)
-- TP の暗号化用 x25519 鍵 / 署名は `nativeCryptoProvider` 経由で TEE-backed (root-lens の C2paBridge/TEE 系と同じ keystore)
-- 本タスクでは production CA に届けない (self-signed と同じ流れ。Privy 側の wallet 鍵は本物の Solana 鍵)
+- **C2PA 署名鍵**: task 07 の dev cert chain (`devCerts.ts` の DEV_CHAIN_PEM / DEV_DEVICE_KEY_PEM) のみ。TP の TEE node はこれを verify する側
+- **Privy embedded Solana wallet**: Privy が device 上で生成する Solana 鍵。`useEmbeddedSolanaWallet().wallets[0].address` で wallet address だけ取れれば十分。秘密鍵は Privy の SDK 内に閉じ、本アプリは触らない
+- **TP register の AES-GCM**: TP SDK が **session 毎に ephemeral X25519 ECDH** で鍵を導出し、その session 鍵でアップロードを暗号化する。`nativeCryptoProvider` は AES 計算を高速化する **crypto primitive provider** で、鍵 store ではない。アプリ側に永続化する鍵は無い
+- production CA / TEE-backed C2PA 鍵は task 09+ で別途 (本タスクは self-signed のまま)
 
 ### CaptureView 統合
 
