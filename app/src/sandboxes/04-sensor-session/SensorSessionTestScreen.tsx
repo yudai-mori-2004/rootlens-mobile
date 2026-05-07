@@ -16,6 +16,12 @@ import {
   type NativeSensorDescriptor,
   type NativeSensorResult,
 } from '../../native/sensorSession';
+import {
+  startHandPose,
+  stopHandPose,
+  getHandPoseDroppedCount,
+  type HandPoseFrame,
+} from '../../native/handPose';
 
 // v0.0.1 task 04 sandbox: SensorSession の最小動作確認画面。
 //   - 起動時に listAvailableSensors() を叩いて利用可能 sensor を表示
@@ -88,13 +94,23 @@ export default function SensorSessionTestScreen() {
     [sensors],
   );
 
+  const [handPoseStats, setHandPoseStats] = useState<{ frames: number; dropped: number } | null>(null);
+
   const onStart = useCallback(async () => {
     if (recording.kind !== 'idle') return;
     setRecording({ kind: 'starting' });
     setError(null);
+    setHandPoseStats(null);
     try {
       const startNs = BigInt(Date.now()) * 1_000_000n;
       const streamId = await nativeStartStream(availableIds, startNs, 0, '');
+      // sensor-session が video モードに入った後で hand pose detector を attach。
+      // この順序: 先に analysisReader が capture session に bind されている事が前提。
+      try {
+        await startHandPose();
+      } catch (e) {
+        console.warn('[HandPose] start failed (continuing without hand pose):', e);
+      }
       setRecording({ kind: 'recording', streamId, startedAt: Date.now() });
     } catch (e) {
       setError(`startStream: ${(e as Error).message}`);
@@ -107,10 +123,18 @@ export default function SensorSessionTestScreen() {
     const { streamId } = recording;
     setRecording({ kind: 'stopping' });
     try {
+      // hand pose を先に止めて detect を停止 (camera tear-down 中の検出失敗を避ける)
+      let handPoseFrames: HandPoseFrame[] = [];
+      let dropped = 0;
+      try {
+        handPoseFrames = await stopHandPose();
+        dropped = await getHandPoseDroppedCount();
+      } catch (e) {
+        console.warn('[HandPose] stop failed:', e);
+      }
       const result = await nativeStopStream(streamId);
-      // 注意: 生 result は IMU を含めると数万エントリで JS thread を block する。
-      // render しない。要約だけ state に置き、生は console へ流す。
-      console.log('[SensorSession] stop result count=', result.length);
+      console.log('[SensorSession] stop result count=', result.length,
+                  'hand_pose frames=', handPoseFrames.length, 'dropped=', dropped);
       const summary: ResultSummary[] = result.map((r) => {
         const payload = (r.payload ?? {}) as Record<string, unknown>;
         const samples = payload['samples'];
@@ -124,6 +148,7 @@ export default function SensorSessionTestScreen() {
         };
       });
       setLastResult(summary);
+      setHandPoseStats({ frames: handPoseFrames.length, dropped });
       setRecording({ kind: 'idle' });
     } catch (e) {
       setError(`stopStream: ${(e as Error).message}`);
@@ -188,6 +213,14 @@ export default function SensorSessionTestScreen() {
             <>
               <Text style={[styles.logCaption, styles.logCaptionError]}>ERROR</Text>
               <Text style={styles.logLineError}>{error}</Text>
+            </>
+          ) : null}
+          {handPoseStats ? (
+            <>
+              <Text style={styles.logCaption}>HAND POSE</Text>
+              <Text style={styles.logLine}>
+                frames={handPoseStats.frames}  dropped={handPoseStats.dropped}
+              </Text>
             </>
           ) : null}
           {lastResult ? (

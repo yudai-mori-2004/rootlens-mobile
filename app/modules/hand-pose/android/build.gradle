@@ -1,0 +1,40 @@
+apply plugin: 'com.android.library'
+apply plugin: 'kotlin-android'
+
+group = 'io.rootlens.handpose'
+version = '0.1.0'
+
+def expoModulesCorePlugin = new File(project(":expo-modules-core").projectDir.absolutePath, "ExpoModulesCorePlugin.gradle")
+apply from: expoModulesCorePlugin
+applyKotlinExpoModulesCorePlugin()
+useCoreDependencies()
+useExpoPublishing()
+
+android {
+  namespace 'io.rootlens.handpose'
+  compileSdkVersion safeExtGet("compileSdkVersion", 35)
+
+  defaultConfig {
+    minSdkVersion safeExtGet("minSdkVersion", 24)
+    targetSdkVersion safeExtGet("targetSdkVersion", 35)
+    versionCode 1
+    versionName "0.1.0"
+  }
+
+  androidResources {
+    noCompress 'task'
+  }
+
+  lintOptions { abortOnError false }
+}
+
+dependencies {
+  implementation project(':expo-modules-core')
+  // sensor-session の CameraFrameConsumer interface を import するため
+  implementation project(':sensor-session')
+
+  // MediaPipe Tasks Vision (HandLandmarker)
+  // 0.10.20 は Solana Seeker (Android 16) で BitmapImageBuilder JNI が
+  // SIGSEGV する。0.10.29 + ByteBufferImageBuilder で回避済 (root-lens task 03 流用)。
+  implementation 'com.google.mediapipe:tasks-vision:0.10.29'
+}

@@ -22,6 +22,12 @@ app/ios/build/
 app/android/.gradle/
 app/android/app/build/
 app/android/build/
+# Local Expo Modules build artifacts
+app/modules/*/android/build/
+app/modules/*/android/.cxx/
+app/modules/*/android/.gradle/
+app/modules/*/ios/build/
+app/modules/*/ios/Pods/
 *.jks
 *.p8
 *.p12

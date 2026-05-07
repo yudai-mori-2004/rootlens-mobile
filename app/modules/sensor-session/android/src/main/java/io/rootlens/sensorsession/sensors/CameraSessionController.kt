@@ -41,6 +41,18 @@ import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
 /**
+ * sensor-session の camera frame stream を購読するための consumer interface (Task 05)。
+ *
+ * onFrame は CameraSessionController の analysis HandlerThread
+ * (rootlens-camera-analysis) で同期呼出される。Image は呼出し中のみ valid。
+ * consumer は必要なデータを inline で抽出して即 return すること。
+ * Image.close() は呼出し側 (CameraSessionController) が listener finally 句で行う。
+ */
+interface CameraFrameConsumer {
+  fun onFrame(image: Image, timestampNs: Long, frameIndex: Long, sensorOrientation: Int)
+}
+
+/**
  * AVCaptureSession 相当 — Process 内で 1 個だけ持つ singleton。
  * Camera2Sensor が capture に使い、PreviewView がプレビュー描画 Surface を attach する。
  *
@@ -116,6 +128,16 @@ class CameraSessionController private constructor(private val appContext: Contex
   private val bundleMutex = Mutex()
   private var bundleAnchorKey: Long = 0L
   private var bundleResult: CapturedBundle? = null
+
+  // Task 05: ML 用 frame analysis stream (YUV_420_888)。
+  // video モード時のみ encoder Surface と並列に bind され、ImageReader からの listener が
+  // attach 済 CameraFrameConsumer に fan-out する。
+  private var analysisReader: ImageReader? = null
+  private var analysisSize: Size? = null
+  private val analysisThread = HandlerThread("rootlens-camera-analysis").apply { start() }
+  private val analysisHandler = Handler(analysisThread.looper)
+  private val frameConsumers = mutableListOf<CameraFrameConsumer>()
+  @Volatile private var analysisFrameIndex: Long = 0L
 
   private val lock = Any()
 
@@ -197,7 +219,7 @@ class CameraSessionController private constructor(private val appContext: Contex
    */
   private suspend fun rebuildSession() {
     val snap = synchronized(lock) {
-      SessionSnap(device, jpegReader, depthReader, previewSurface, videoEncoderSurface, inVideoMode)
+      SessionSnap(device, jpegReader, depthReader, previewSurface, videoEncoderSurface, inVideoMode, analysisReader)
     }
     val cam = snap.device
     val jpeg = snap.jpeg
@@ -205,11 +227,14 @@ class CameraSessionController private constructor(private val appContext: Contex
     val preview = snap.preview
     val encoderSurface = snap.encoderSurface
     val videoMode = snap.videoMode
+    val analysis = snap.analysis
     if (cam == null) return
 
     val outputs = mutableListOf<Surface>()
     if (videoMode && encoderSurface != null) {
       outputs.add(encoderSurface)
+      // Task 05: video モードでは ML analysis surface を 2nd output として bind
+      analysis?.let { outputs.add(it.surface) }
       // 動画モードでは depth は出力しない (CAMM track 諸々と組み合わせると複雑)。
       // 動画 depth キーフレーム抽出は Phase 5 で別経路 (Camera2 reprocess または別 capture request) で扱う
     } else if (jpeg != null) {
@@ -230,7 +255,7 @@ class CameraSessionController private constructor(private val appContext: Contex
     }
 
     if (videoMode && encoderSurface != null) {
-      startVideoRepeating(cam, newSession, encoderSurface, preview)
+      startVideoRepeating(cam, newSession, encoderSurface, preview, analysis?.surface)
     } else {
       preview?.let { startPreview(cam, newSession, it) }
     }
@@ -243,7 +268,8 @@ class CameraSessionController private constructor(private val appContext: Contex
     val depth: ImageReader?,
     val preview: Surface?,
     val encoderSurface: Surface?,
-    val videoMode: Boolean
+    val videoMode: Boolean,
+    val analysis: ImageReader?
   )
 
   private suspend fun createCaptureSession(
@@ -285,17 +311,20 @@ class CameraSessionController private constructor(private val appContext: Contex
     }
   }
 
-  /** 録画用の repeating request: encoder surface (+ optional preview) を target にして 30fps で流す */
+  /** 録画用の repeating request: encoder surface (+ optional preview / analysis) を target にして 30fps で流す */
   private fun startVideoRepeating(
     cam: CameraDevice,
     sess: CameraCaptureSession,
     encoderSurface: Surface,
-    preview: Surface?
+    preview: Surface?,
+    analysis: Surface?
   ) {
     try {
       val builder = cam.createCaptureRequest(CameraDevice.TEMPLATE_RECORD).apply {
         addTarget(encoderSurface)
         preview?.let { addTarget(it) }
+        // Task 05: ML analysis stream を encoder と同 frame で配信
+        analysis?.let { addTarget(it) }
         set(CaptureRequest.CONTROL_MODE, CameraMetadata.CONTROL_MODE_AUTO)
         set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_VIDEO)
         // 30fps target FPS range は機種依存。auto に任せると安定しないことがあるので明示
@@ -303,7 +332,7 @@ class CameraSessionController private constructor(private val appContext: Contex
       }
       previewRequestBuilder = builder
       sess.setRepeatingRequest(builder.build(), null, backgroundHandler)
-      Log.i(TAG, "video repeating started")
+      Log.i(TAG, "video repeating started (analysis=${analysis != null})")
     } catch (e: Throwable) {
       Log.w(TAG, "startVideoRepeating failed: ${e.message}", e)
     }
@@ -381,6 +410,20 @@ class CameraSessionController private constructor(private val appContext: Contex
       Log.i(TAG, "configureIfNeededInternal: no DEPTH_OUTPUT capability on this camera")
     }
 
+    // Task 05: ML 用 analysis stream (YUV_420_888)。target ~1280x720。
+    // 機種ごとの output size から最も近いものを選ぶ。
+    val yuvSizes = streamMap.getOutputSizes(ImageFormat.YUV_420_888)
+    val targetW = 1280; val targetH = 720
+    val pickAnalysis = yuvSizes?.minByOrNull {
+      Math.abs(it.width.toLong() * it.height.toLong() - targetW.toLong() * targetH.toLong())
+    }
+    val aReader = if (pickAnalysis != null) {
+      ImageReader.newInstance(pickAnalysis.width, pickAnalysis.height, ImageFormat.YUV_420_888, 2).also {
+        setupAnalysisListener(it)
+      }
+    } else null
+    Log.i(TAG, "configureIfNeededInternal: analysis=${pickAnalysis?.let { "${it.width}x${it.height}" } ?: "none"}")
+
     val opened = openCamera(targetId)
     Log.i(TAG, "configureIfNeededInternal: camera opened id=$targetId jpeg=${largestJpeg.width}x${largestJpeg.height} depth=${dSize?.let { "${it.width}x${it.height}" } ?: "none"}")
 
@@ -393,9 +436,52 @@ class CameraSessionController private constructor(private val appContext: Contex
       depthReader = dReader
       depthSize = dSize
       hasDepthCapability = supportsDepth && dReader != null
+      analysisReader = aReader
+      analysisSize = pickAnalysis
     }
 
     rebuildSession()
+  }
+
+  // ---------------- Task 05: Frame consumer (ML analysis stream) ----------------
+
+  fun attachFrameConsumer(c: CameraFrameConsumer) {
+    synchronized(lock) {
+      if (!frameConsumers.contains(c)) frameConsumers.add(c)
+    }
+  }
+
+  fun detachFrameConsumer(c: CameraFrameConsumer) {
+    synchronized(lock) {
+      frameConsumers.remove(c)
+    }
+  }
+
+  /**
+   * analysisReader の OnImageAvailableListener を analysis HandlerThread に紐付ける。
+   * 配信先の consumer.onFrame は同期的に呼び出される。Image は finally で必ず close。
+   * consumer は inline でデータを抽出 (YUV planes copy 等) し、ML 等の重処理は
+   * 各々の thread に逃がすこと。
+   */
+  private fun setupAnalysisListener(reader: ImageReader) {
+    reader.setOnImageAvailableListener({ r ->
+      val image = try { r.acquireLatestImage() } catch (_: Throwable) { null } ?: return@setOnImageAvailableListener
+      try {
+        val ts = image.timestamp
+        val fi = analysisFrameIndex
+        analysisFrameIndex = fi + 1
+        val orientation = synchronized(lock) {
+          characteristics?.get(CameraCharacteristics.SENSOR_ORIENTATION) ?: 0
+        }
+        val consumers = synchronized(lock) { frameConsumers.toList() }
+        for (c in consumers) {
+          try { c.onFrame(image, ts, fi, orientation) }
+          catch (t: Throwable) { Log.w(TAG, "consumer.onFrame failed: ${t.message}", t) }
+        }
+      } finally {
+        try { image.close() } catch (_: Throwable) {}
+      }
+    }, analysisHandler)
   }
 
   // ---------------- Camera facing 切替 (Task 05) ----------------
