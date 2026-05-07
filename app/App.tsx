@@ -34,14 +34,14 @@ const appNavTheme = {
 };
 
 export default function App() {
-  const [fontsLoaded] = useFonts({
+  const [fontsLoaded, fontError] = useFonts({
     Fraunces_300Light,
     Fraunces_400Regular,
     Fraunces_500Medium,
     Fraunces_600SemiBold,
   });
 
-  if (!fontsLoaded) {
+  if (!fontsLoaded && !fontError) {
     return (
       <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#fafaf7' }}>
         <ActivityIndicator color="#0a1f44" />

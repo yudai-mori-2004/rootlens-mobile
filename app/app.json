@@ -32,7 +32,9 @@
           "cameraPermission": "カメラで写真や動画を撮影するために使用します",
           "microphonePermission": "動画撮影で音声を録音するために使用します"
         }
-      ]
+      ],
+      "expo-asset",
+      "expo-font"
     ]
   }
 }
