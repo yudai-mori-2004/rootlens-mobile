@@ -26,8 +26,12 @@ import {
 } from '../../../native/handPose';
 import { signMp4, isC2paAvailable } from '../../../native/c2paBridge';
 import { DEV_CHAIN_PEM, DEV_DEVICE_KEY_PEM } from '../../../native/devCerts';
-import { useAuth } from '../../../hooks/useAuth';
 import { registerOnTitleProtocol } from '../../../services/titleProtocol';
+
+// Demo mode: Privy login をパスして固定 wallet pubkey を使う。
+// .env の EXPO_PUBLIC_DEMO_WALLET_ADDRESS が空なら TP register は skip。
+const DEMO_WALLET_ADDRESS =
+  (process.env as Record<string, string | undefined>).EXPO_PUBLIC_DEMO_WALLET_ADDRESS ?? '';
 import { HandPoseOverlay } from '../../01-hand-pose-gesture/HandPoseOverlay';
 import {
   evaluateTaskGate,
@@ -80,7 +84,7 @@ export const CaptureView: React.FC<Props> = ({ task, onComplete, onCancel }) => 
   const [state, dispatch] = useReducer(captureReducer, initialCaptureSub);
   const [hands, setHands] = useState<HandPoseFrame['hands']>([]);
   const [previewSize, setPreviewSize] = useState({ width: 0, height: 0 });
-  const { address: walletAddress } = useAuth();
+  const walletAddress = DEMO_WALLET_ADDRESS;
 
   const [vlmStartFeedback, setVlmStartFeedback] = useState<{ reason: string; score: number } | null>(null);
 
