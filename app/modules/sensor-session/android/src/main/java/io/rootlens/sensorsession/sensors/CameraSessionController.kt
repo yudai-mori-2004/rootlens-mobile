@@ -442,6 +442,11 @@ class CameraSessionController private constructor(private val appContext: Contex
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
           set(CaptureRequest.CONTROL_ZOOM_RATIO, minZoomRatio)
         }
+        // Pixel の Lyric は TEMPLATE_RECORD + HwVideoEncoder usage で EIS を auto-on にし、
+        // 10-20% クロップ → preview より FOV が狭く見える。preview と FOV を揃えるため明示的 OFF。
+        // OIS は physical ultra-wide にはハードウェア無いが念のため OFF。
+        set(CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE, CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE_OFF)
+        set(CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE, CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE_OFF)
       }
       previewRequestBuilder = builder
       sess.setRepeatingRequest(builder.build(), null, backgroundHandler)

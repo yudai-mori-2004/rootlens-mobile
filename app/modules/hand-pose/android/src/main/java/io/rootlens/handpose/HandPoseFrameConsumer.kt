@@ -111,26 +111,23 @@ class HandPoseFrameConsumer(
   }
 
   /**
-   * VLM 用 snapshot: 直近 analysis frame を JPEG として cache に書き出し file:// URI を返す。
-   * NV21 → YuvImage → JPEG 直 encode (Bitmap 経由しない、軽量)。
+   * Snapshot: 直近 analysis frame を JPEG として cache に書き出し file:// URI を返す。
+   * Result 画面で正しい向きで表示するため sensor rotation を適用する。
    */
   fun snapshotJpeg(context: android.content.Context, quality: Int = 85): String {
     val nv21 = latestNv21 ?: throw IllegalStateException("no analysis frame yet")
     val w = latestWidth
     val h = latestHeight
     val rotation = latestRotation
-    val yuv = android.graphics.YuvImage(nv21, android.graphics.ImageFormat.NV21, w, h, null)
+    val bitmap = nv21ToArgbBitmap(nv21, w, h, rotation)
     val baos = java.io.ByteArrayOutputStream()
-    yuv.compressToJpeg(android.graphics.Rect(0, 0, w, h), quality, baos)
-    val jpegBytes = baos.toByteArray()
-    // rotation は Bitmap 経由でしか直接適用できない (JPEG Exif 書き換えは複雑)。
-    // VLM 側は image content の意味理解なので回転はラフでも問題ない想定。
-    // 必要なら後段で Exif Orientation tag を付加 (TODO)
+    bitmap.compress(Bitmap.CompressFormat.JPEG, quality, baos)
+    bitmap.recycle()
     val file = java.io.File(
       context.cacheDir,
       "rootlens_snapshot_${System.nanoTime()}.jpg"
     )
-    java.io.FileOutputStream(file).use { it.write(jpegBytes) }
+    java.io.FileOutputStream(file).use { it.write(baos.toByteArray()) }
     return "file://${file.absolutePath}"
   }
 
