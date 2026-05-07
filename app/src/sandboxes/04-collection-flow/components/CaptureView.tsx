@@ -24,6 +24,8 @@ import {
   subscribeHandPose,
   type HandPoseFrame,
 } from '../../../native/handPose';
+import { signMp4, isC2paAvailable } from '../../../native/c2paBridge';
+import { DEV_CHAIN_PEM, DEV_DEVICE_KEY_PEM } from '../../../native/devCerts';
 import { HandPoseOverlay } from '../../01-hand-pose-gesture/HandPoseOverlay';
 import {
   evaluateTaskGate,
@@ -284,6 +286,21 @@ export const CaptureView: React.FC<Props> = ({ task, onComplete, onCancel }) => 
         } catch (err) {
           console.warn('[CaptureView] sidecar save failed', err);
         }
+      }
+
+      // 6) C2PA 署名 (dev cert chain がある場合のみ)
+      //    devCerts.ts の値が空 (gen-dev-certs.sh 未実行) なら skip。
+      if (videoUri && DEV_CHAIN_PEM && DEV_DEVICE_KEY_PEM && isC2paAvailable()) {
+        try {
+          const signedUri = videoUri.replace(/\.mp4$/i, '.signed.mp4');
+          await signMp4(videoUri, signedUri, DEV_CHAIN_PEM, DEV_DEVICE_KEY_PEM);
+          videoUri = signedUri;
+          console.log('[CaptureView] C2PA signing OK:', signedUri);
+        } catch (err) {
+          console.warn('[CaptureView] C2PA signing failed (continuing with unsigned mp4):', err);
+        }
+      } else if (videoUri && (!DEV_CHAIN_PEM || !DEV_DEVICE_KEY_PEM)) {
+        console.log('[CaptureView] C2PA signing skipped (devCerts.ts is empty — run scripts/gen-dev-certs.sh)');
       }
 
       if (cancelled) return;

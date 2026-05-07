@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+  <!-- C2PA module は file system への read/write のみ。permission 要求は無し。
+       (CAMERA / RECORD_AUDIO 等は app 側 manifest で宣言済) -->
+</manifest>

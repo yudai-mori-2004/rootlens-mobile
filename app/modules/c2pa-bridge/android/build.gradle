@@ -1,0 +1,40 @@
+apply plugin: 'com.android.library'
+apply plugin: 'kotlin-android'
+
+group = 'io.rootlens.c2pa'
+version = '0.0.1'
+
+def expoModulesCorePlugin = new File(project(":expo-modules-core").projectDir.absolutePath, "ExpoModulesCorePlugin.gradle")
+apply from: expoModulesCorePlugin
+applyKotlinExpoModulesCorePlugin()
+useCoreDependencies()
+useExpoPublishing()
+
+android {
+  namespace 'io.rootlens.c2pa'
+  compileSdkVersion safeExtGet("compileSdkVersion", 35)
+
+  defaultConfig {
+    minSdkVersion safeExtGet("minSdkVersion", 24)
+    targetSdkVersion safeExtGet("targetSdkVersion", 35)
+    versionCode 1
+    versionName "0.0.1"
+    // .so バイナリ (libc2pa_bridge.so / libc2pa_jni.so) は src/main/jniLibs/<abi>/ に
+    // prebuilt 配置済 (root-lens 由来)。NDK / cmake 経由のビルドは行わず Gradle が
+    // 自動で APK にバンドルする。
+    ndk {
+      abiFilters 'arm64-v8a', 'x86_64'
+    }
+  }
+
+  // Note: JNI 実装パッケージは `io.rootlens.app` (root-lens 互換)。
+  // .so の symbol が `Java_io_rootlens_app_C2paBridgeModule_*` で固定なので、
+  // Kotlin Module は `io.rootlens.app` パッケージに置く必要がある (build.gradle の
+  // namespace は本ライブラリのリソースのみ。Kotlin の package 宣言は別)。
+
+  lintOptions { abortOnError false }
+}
+
+dependencies {
+  implementation project(':expo-modules-core')
+}
