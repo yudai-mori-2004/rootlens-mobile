@@ -1,6 +1,7 @@
 package io.rootlens.handpose
 
 import android.content.Context
+import android.util.Log
 import android.graphics.Bitmap
 import com.google.mediapipe.framework.image.ByteBufferImageBuilder
 import com.google.mediapipe.framework.image.MPImage
@@ -22,21 +23,32 @@ class HandPoseDetector(context: Context) {
   private val handLandmarker: HandLandmarker
 
   init {
-    val baseOptions = BaseOptions.builder()
-      .setModelAssetPath(MODEL_ASSET_PATH)
-      .setDelegate(Delegate.CPU)
-      .build()
+    handLandmarker = createWithDelegate(context, Delegate.GPU)
+      ?: createWithDelegate(context, Delegate.CPU)
+      ?: error("HandLandmarker init failed on both GPU and CPU delegates")
+  }
 
-    val options = HandLandmarker.HandLandmarkerOptions.builder()
-      .setBaseOptions(baseOptions)
-      .setNumHands(MAX_HANDS)
-      .setMinHandDetectionConfidence(0.5f)
-      .setMinHandPresenceConfidence(0.5f)
-      .setMinTrackingConfidence(0.5f)
-      .setRunningMode(RunningMode.IMAGE)
-      .build()
-
-    handLandmarker = HandLandmarker.createFromOptions(context, options)
+  private fun createWithDelegate(context: Context, delegate: Delegate): HandLandmarker? {
+    return try {
+      val baseOptions = BaseOptions.builder()
+        .setModelAssetPath(MODEL_ASSET_PATH)
+        .setDelegate(delegate)
+        .build()
+      val options = HandLandmarker.HandLandmarkerOptions.builder()
+        .setBaseOptions(baseOptions)
+        .setNumHands(MAX_HANDS)
+        .setMinHandDetectionConfidence(0.5f)
+        .setMinHandPresenceConfidence(0.5f)
+        .setMinTrackingConfidence(0.5f)
+        .setRunningMode(RunningMode.IMAGE)
+        .build()
+      val lm = HandLandmarker.createFromOptions(context, options)
+      Log.i(TAG, "HandLandmarker initialized with delegate=$delegate")
+      lm
+    } catch (t: Throwable) {
+      Log.w(TAG, "HandLandmarker init failed with delegate=$delegate: ${t.message}")
+      null
+    }
   }
 
   fun detect(bitmap: Bitmap): List<HandObservation> {
@@ -104,6 +116,7 @@ class HandPoseDetector(context: Context) {
   }
 
   companion object {
+    private const val TAG = "HandPoseDetector"
     private const val MODEL_ASSET_PATH = "hand_landmarker.task"
     private const val MAX_HANDS = 2
   }

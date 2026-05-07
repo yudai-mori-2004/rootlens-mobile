@@ -42,24 +42,46 @@ class HandPoseFrameConsumer(
   @Volatile var dropped: Long = 0L
     private set
 
+  /**
+   * 各 ML 推論完了時に呼ばれる callback。HandPoseModule が attach 時に
+   * sendEvent("onHandPose", payload) を呼ぶ lambda を set する。
+   * gesture state machine が JS 側で per-frame で動くために必要。
+   */
+  @Volatile var onFrameReady: ((Map<String, Any>) -> Unit)? = null
+
+  // VLM snapshot 用 — 最新の variable は別 thread で書き換えられても safe な順序で読まれるよう Volatile。
+  @Volatile private var latestNv21: ByteArray? = null
+  @Volatile private var latestWidth: Int = 0
+  @Volatile private var latestHeight: Int = 0
+  @Volatile private var latestRotation: Int = 0
+
   override fun onFrame(image: Image, timestampNs: Long, frameIndex: Long, sensorOrientation: Int) {
-    // 前フレームの ML が走っていれば drop。リアルタイム性 > 完全性。
-    if (!processing.compareAndSet(false, true)) {
-      dropped += 1
-      return
-    }
     // sensor-session 側の Image は finally で close されるので、必要なバイト列を inline で copy。
     val width = image.width
     val height = image.height
     val nv21 = imageToNv21(image)
 
+    // VLM snapshot 用に最新フレームを更新 (ML drop されてもここは更新する)
+    latestNv21 = nv21
+    latestWidth = width
+    latestHeight = height
+    latestRotation = sensorOrientation
+
+    // 前フレームの ML が走っていれば drop。リアルタイム性 > 完全性。
+    if (!processing.compareAndSet(false, true)) {
+      dropped += 1
+      return
+    }
+
     mlHandler.post {
       try {
         val bitmap = nv21ToArgbBitmap(nv21, width, height, sensorOrientation)
         val hands = detector.detect(bitmap)
-        synchronized(framesLock) {
-          frames.add(HandPoseFrame(frame_index = frameIndex, ts_ns = timestampNs, hands = hands))
-        }
+        val frame = HandPoseFrame(frame_index = frameIndex, ts_ns = timestampNs, hands = hands)
+        synchronized(framesLock) { frames.add(frame) }
+        // gesture state machine 用 live event。frame が ring buffer に積まれる毎に発火。
+        try { onFrameReady?.invoke(frame.toMap()) }
+        catch (t: Throwable) { Log.w(TAG, "onFrameReady callback failed", t) }
         bitmap.recycle()
       } catch (t: Throwable) {
         Log.w(TAG, "ML inference failed at frame=$frameIndex: ${t.message}", t)
@@ -86,6 +108,30 @@ class HandPoseFrameConsumer(
   fun close() {
     mlHandler.removeCallbacksAndMessages(null)
     mlThread.quitSafely()
+  }
+
+  /**
+   * VLM 用 snapshot: 直近 analysis frame を JPEG として cache に書き出し file:// URI を返す。
+   * NV21 → YuvImage → JPEG 直 encode (Bitmap 経由しない、軽量)。
+   */
+  fun snapshotJpeg(context: android.content.Context, quality: Int = 85): String {
+    val nv21 = latestNv21 ?: throw IllegalStateException("no analysis frame yet")
+    val w = latestWidth
+    val h = latestHeight
+    val rotation = latestRotation
+    val yuv = android.graphics.YuvImage(nv21, android.graphics.ImageFormat.NV21, w, h, null)
+    val baos = java.io.ByteArrayOutputStream()
+    yuv.compressToJpeg(android.graphics.Rect(0, 0, w, h), quality, baos)
+    val jpegBytes = baos.toByteArray()
+    // rotation は Bitmap 経由でしか直接適用できない (JPEG Exif 書き換えは複雑)。
+    // VLM 側は image content の意味理解なので回転はラフでも問題ない想定。
+    // 必要なら後段で Exif Orientation tag を付加 (TODO)
+    val file = java.io.File(
+      context.cacheDir,
+      "rootlens_snapshot_${System.nanoTime()}.jpg"
+    )
+    java.io.FileOutputStream(file).use { it.write(jpegBytes) }
+    return "file://${file.absolutePath}"
   }
 
   // ----- Image conversion helpers -----

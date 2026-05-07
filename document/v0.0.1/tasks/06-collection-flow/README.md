@@ -126,16 +126,21 @@ async function assembleAndSaveSidecar(args: {
 
 ## 完了条件
 
-- [ ] hand-pose に live event API 追加 (Kotlin sendEvent + TS addListener)
-- [ ] TS sandbox 04 ファイル群を root-lens から再コピー (TaskListView / BriefView / CaptureView / ResultView / CountdownOverlay / HandStatusBadge / theme / tasks / stateMachine)
-- [ ] gesture.ts / HandPoseOverlay.tsx / vlmClient.ts 再コピー
-- [ ] CaptureView を sensor-session + hand-pose 経由に書き換え
-- [ ] sidecar.ts (新規) で clip_<uuid>.{mp4,json} を expo-file-system に書く
-- [ ] registry を 04-collection-flow に切替
-- [ ] アセット (5 task × 2 画像) を再コピー
-- [ ] `tsc --noEmit` pass
-- [ ] `expo-doctor` pass
-- [ ] Pixel 10 で end-to-end (task 選択 → 撮影 → VLM 判定 → result → JSON 確認)
+- [x] hand-pose に live event API 追加 (Kotlin sendEvent + TS addListener)
+- [x] TS sandbox 04 ファイル群を root-lens から再コピー (TaskListView / BriefView / CaptureView / ResultView / CountdownOverlay / HandStatusBadge / theme / tasks / stateMachine)
+- [x] gesture.ts / HandPoseOverlay.tsx / vlmClient.ts 再コピー
+- [x] CaptureView を sensor-session + hand-pose 経由に書き換え
+- [x] sidecar.ts (新規) で clip_<uuid>.{mp4,json} を expo-file-system に書く
+- [x] registry を 04-collection-flow に切替
+- [x] アセット (5 task × 2 画像) を再コピー
+- [x] `tsc --noEmit` pass
+- [x] `expo-doctor` pass
+- [x] Pixel 10 で end-to-end (task 選択 → 撮影 → VLM 判定 → result → JSON 確認)
+- [x] 広角 (Pixel 10 ultra-wide 1.854mm) 自動選択
+- [x] hand-pose GPU delegate (Adreno) でパフォ向上
+- [x] resume-from-home フリーズ修正 (preview surface destroy 時に device tear-down)
+
+## 完了日: 2026-05-07
 
 ## スコープ外 (後続タスク)
 

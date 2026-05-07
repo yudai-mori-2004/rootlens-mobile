@@ -139,6 +139,15 @@ class CameraSessionController private constructor(private val appContext: Contex
   private val frameConsumers = mutableListOf<CameraFrameConsumer>()
   @Volatile private var analysisFrameIndex: Long = 0L
 
+  // Task 06: 広角優先のための zoom ratio。logical multi-camera (Pixel 系の back) で
+  // CONTROL_ZOOM_RATIO を min に設定すると ultra-wide に自動切替される。
+  // configure 時に CameraCharacteristics.CONTROL_ZOOM_RATIO_RANGE.lower を取得して保存。
+  @Volatile private var minZoomRatio: Float = 1.0f
+
+  // Task 06: 物理 ultra-wide camera の ID。logical を開いて OutputConfiguration で
+  // ここに stream を routing する (API 28+)。null なら logical の default 物理が使われる。
+  @Volatile private var preferredPhysicalCameraId: String? = null
+
   private val lock = Any()
 
   // ---------------- Permission ----------------
@@ -160,12 +169,75 @@ class CameraSessionController private constructor(private val appContext: Contex
     }
   }
 
-  private fun pickCameraId(facing: Int): String? {
-    return cameraManager.cameraIdList.firstOrNull {
-      val c = cameraManager.getCameraCharacteristics(it)
-      c.get(CameraCharacteristics.LENS_FACING) == facing
-    } ?: cameraManager.cameraIdList.firstOrNull()
+  /**
+   * Egocentric 撮影で最広角 FOV を確保するための camera 選定 (Task 06)。
+   *
+   * Android では物理カメラを直接 open できない HAL が多く (Pixel 10 で実測:
+   * `validateConnectLocked: No camera device with ID "3" available`)、logical camera を
+   * open したまま `OutputConfiguration.setPhysicalCameraId(physicalId)` で stream を
+   * 物理 ultra-wide camera にルーティングする方式が正解。
+   *
+   * 戻り値: (logicalId to preferredPhysicalId)
+   *   - logicalId: openCamera() に渡す ID
+   *   - preferredPhysicalId: createCaptureSession 時に各 OutputConfiguration に
+   *                          set する physical id (API 28+)。null なら何もしない。
+   */
+  private data class CameraSelection(val logicalId: String, val preferredPhysicalId: String?)
+
+  private fun selectCamera(facing: Int): CameraSelection? {
+    data class Cand(val id: String, val minFocal: Float)
+    var bestLogical: Cand? = null
+    var bestPhysicalUnderLogical: Pair<String, Cand>? = null  // (logicalId, physicalCand)
+
+    for (id in cameraManager.cameraIdList) {
+      try {
+        val c = cameraManager.getCameraCharacteristics(id)
+        if (c.get(CameraCharacteristics.LENS_FACING) != facing) continue
+        val focals = c.get(CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS)
+        val minF = focals?.minOrNull() ?: Float.MAX_VALUE
+        if (bestLogical == null || minF < bestLogical.minFocal) {
+          bestLogical = Cand(id, minF)
+        }
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+          for (pid in c.physicalCameraIds) {
+            try {
+              val pc = cameraManager.getCameraCharacteristics(pid)
+              if (pc.get(CameraCharacteristics.LENS_FACING) != facing) continue
+              val pfs = pc.get(CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS)
+              val pmin = pfs?.minOrNull() ?: Float.MAX_VALUE
+              val current = bestPhysicalUnderLogical
+              if (current == null || pmin < current.second.minFocal) {
+                bestPhysicalUnderLogical = id to Cand(pid, pmin)
+              }
+            } catch (_: Throwable) { /* skip */ }
+          }
+        }
+      } catch (_: Throwable) { /* skip */ }
+    }
+
+    Log.i(
+      TAG,
+      "selectCamera facing=$facing bestLogical=$bestLogical bestPhysicalUnderLogical=$bestPhysicalUnderLogical"
+    )
+
+    // 物理 ultra-wide が logical 配下にあり、かつ logical 自体より焦点が短いなら採用。
+    val physicalChoice = bestPhysicalUnderLogical
+    if (physicalChoice != null && bestLogical != null &&
+        physicalChoice.second.minFocal < bestLogical.minFocal) {
+      Log.i(
+        TAG,
+        "selectCamera: open logical=${physicalChoice.first}, route streams to physical=${physicalChoice.second.id} (${physicalChoice.second.minFocal}mm)"
+      )
+      return CameraSelection(physicalChoice.first, physicalChoice.second.id)
+    }
+    val l = bestLogical ?: return null
+    Log.i(TAG, "selectCamera: open logical=${l.id} (${l.minFocal}mm), no physical override")
+    return CameraSelection(l.id, null)
   }
+
+  // 既存呼び出し互換のための shim。新規コードは selectCamera() を使うこと。
+  private fun pickCameraId(facing: Int): String? = selectCamera(facing)?.logicalId
 
   /** depth output capability を持つ camera を facing 指定で優先選択する (Task 04) */
   private fun pickDepthCameraId(facing: Int): String? {
@@ -242,6 +314,9 @@ class CameraSessionController private constructor(private val appContext: Contex
       // 静止画モード: depth output が利用可能なら同 session に追加 (multi-stream)。
       // TEMPLATE_STILL_CAPTURE が 1 トリガーで JPEG + DEPTH16 の両方を出す。
       depth?.let { outputs.add(it.surface) }
+      // Task 06: 録画前の gesture 検出を可能にするため photo モードでも analysis を bind し、
+      //         preview repeating request の target に追加する (ML 用 30fps frame stream)。
+      analysis?.let { outputs.add(it.surface) }
     } else {
       Log.w(TAG, "rebuildSession: no primary output (no jpeg + no encoder)")
       return
@@ -257,7 +332,8 @@ class CameraSessionController private constructor(private val appContext: Contex
     if (videoMode && encoderSurface != null) {
       startVideoRepeating(cam, newSession, encoderSurface, preview, analysis?.surface)
     } else {
-      preview?.let { startPreview(cam, newSession, it) }
+      // photo モードでも analysis を repeating request に乗せる (preview 無しでも OK)
+      startPreview(cam, newSession, preview, analysis?.surface)
     }
   }
 
@@ -287,7 +363,19 @@ class CameraSessionController private constructor(private val appContext: Contex
       }
     }
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-      val configs = surfaces.map { OutputConfiguration(it) }
+      val phys = preferredPhysicalCameraId
+      val configs = surfaces.map { surface ->
+        OutputConfiguration(surface).apply {
+          if (phys != null) {
+            // Task 06: 物理 ultra-wide にルーティング (Pixel 10 で 1.85mm レンズに固定)
+            try {
+              setPhysicalCameraId(phys)
+            } catch (t: Throwable) {
+              Log.w(TAG, "setPhysicalCameraId($phys) failed on this surface: ${t.message}")
+            }
+          }
+        }
+      }
       cam.createCaptureSession(
         SessionConfiguration(SessionConfiguration.SESSION_REGULAR, configs, backgroundExecutor, callback)
       )
@@ -297,15 +385,36 @@ class CameraSessionController private constructor(private val appContext: Contex
     }
   }
 
-  private fun startPreview(cam: CameraDevice, sess: CameraCaptureSession, preview: Surface) {
+  /**
+   * Photo モードの preview repeating request。preview / analysis は optional。
+   * Task 06: 録画前の gesture 検出のため analysis target を含める。
+   * preview / analysis のどちらも null なら startPreview は何もしない。
+   */
+  private fun startPreview(
+    cam: CameraDevice,
+    sess: CameraCaptureSession,
+    preview: Surface?,
+    analysis: Surface?
+  ) {
+    if (preview == null && analysis == null) return
     try {
       val builder = cam.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW).apply {
-        addTarget(preview)
+        preview?.let { addTarget(it) }
+        analysis?.let { addTarget(it) }
         set(CaptureRequest.CONTROL_MODE, CameraMetadata.CONTROL_MODE_AUTO)
         set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE)
+        // analysis を流すなら 30fps target FPS range を明示 (auto だと analysis が間引かれる事がある)
+        if (analysis != null) {
+          set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, android.util.Range(30, 30))
+        }
+        // Task 06: 広角優先 — logical camera で 0.5x 等が取れる端末 (Pixel 10) は ultra-wide に切替
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+          set(CaptureRequest.CONTROL_ZOOM_RATIO, minZoomRatio)
+        }
       }
       previewRequestBuilder = builder
       sess.setRepeatingRequest(builder.build(), null, backgroundHandler)
+      Log.i(TAG, "preview repeating started (preview=${preview != null} analysis=${analysis != null})")
     } catch (e: Throwable) {
       Log.w(TAG, "startPreview failed: ${e.message}")
     }
@@ -329,6 +438,10 @@ class CameraSessionController private constructor(private val appContext: Contex
         set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_VIDEO)
         // 30fps target FPS range は機種依存。auto に任せると安定しないことがあるので明示
         set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, android.util.Range(30, 30))
+        // Task 06: 録画も広角優先
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+          set(CaptureRequest.CONTROL_ZOOM_RATIO, minZoomRatio)
+        }
       }
       previewRequestBuilder = builder
       sess.setRepeatingRequest(builder.build(), null, backgroundHandler)
@@ -341,20 +454,50 @@ class CameraSessionController private constructor(private val appContext: Contex
   // ---------------- Preview attach (called by PreviewView) ----------------
 
   fun setPreviewSurface(s: Surface?) {
-    synchronized(lock) {
+    val (was, willBe) = synchronized(lock) {
+      val old = previewSurface
       if (previewSurface == s) return
       previewSurface = s
+      old to s
     }
     // ctlScope で実行 (Dispatchers.IO)。backgroundHandler の callback と別スレッドなので
     // configureIfNeeded / openCamera の suspend 待ちが安全に行える。
     ctlScope.launch {
       configMutex.withLock {
         try {
+          // Task 06 lifecycle fix: surface が null になった時 (Activity pause / 別画面遷移) は
+          // device + session を完全 close。これで Camera2 が Android 側で reclaim される/
+          // 競合する状況を避け、resume 時は新規 surface 到来 → fresh configure で復帰する。
+          if (s == null && was != null) {
+            tearDownDeviceForLifecycle()
+            return@withLock
+          }
           rebuildSessionIfReady()
         } catch (t: Throwable) {
           Log.w(TAG, "rebuildSessionIfReady failed: ${t.message}", t)
         }
       }
+    }
+  }
+
+  /** Preview detach 時に device + session を全て close。frame consumer は維持したまま、
+   *  次の preview 復帰時に rebuildSessionIfReady → configureIfNeededInternal で再構成される。 */
+  private fun tearDownDeviceForLifecycle() {
+    Log.i(TAG, "tearDownDeviceForLifecycle: closing session+device for resume safety")
+    synchronized(lock) {
+      try { session?.close() } catch (_: Throwable) {}
+      try { device?.close() } catch (_: Throwable) {}
+      session = null
+      device = null
+      cameraId = null
+      characteristics = null
+      // jpegReader / depthReader / analysisReader は ImageReader で重い。再構成時に作り直す。
+      try { jpegReader?.close() } catch (_: Throwable) {}
+      try { depthReader?.close() } catch (_: Throwable) {}
+      try { analysisReader?.close() } catch (_: Throwable) {}
+      jpegReader = null
+      depthReader = null
+      analysisReader = null
     }
   }
 
@@ -375,10 +518,22 @@ class CameraSessionController private constructor(private val appContext: Contex
     if (!needConfigure) return
 
     Log.i(TAG, "configureIfNeededInternal: starting")
-    val targetId = pickDepthCameraId(currentFacing) ?: pickCameraId(currentFacing) ?: throw CameraAccessException(
-      CameraAccessException.CAMERA_ERROR,
-      "no camera available for facing=$currentFacing"
-    )
+    // Task 06: 物理 ultra-wide が選べる場合は logical を open + 物理に routing する形に。
+    val depthId = pickDepthCameraId(currentFacing)
+    val targetId: String
+    val preferredPhysical: String?
+    if (depthId != null) {
+      targetId = depthId
+      preferredPhysical = null  // depth-capable カメラは ultra-wide 切替対象外
+    } else {
+      val sel = selectCamera(currentFacing) ?: throw CameraAccessException(
+        CameraAccessException.CAMERA_ERROR,
+        "no camera available for facing=$currentFacing"
+      )
+      targetId = sel.logicalId
+      preferredPhysical = sel.preferredPhysicalId
+    }
+    preferredPhysicalCameraId = preferredPhysical
     val chr = cameraManager.getCameraCharacteristics(targetId)
     val streamMap = chr.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
       ?: throw CameraAccessException(CameraAccessException.CAMERA_ERROR, "no stream config map")
@@ -410,10 +565,12 @@ class CameraSessionController private constructor(private val appContext: Contex
       Log.i(TAG, "configureIfNeededInternal: no DEPTH_OUTPUT capability on this camera")
     }
 
-    // Task 05: ML 用 analysis stream (YUV_420_888)。target ~1280x720。
-    // 機種ごとの output size から最も近いものを選ぶ。
+    // Task 05: ML 用 analysis stream (YUV_420_888)。target ~640x480。
+    // CPU MediaPipe で 30fps を維持するために 720p ではなく 480p。
+    // Hand pose 検出には 480p で十分 (顔/物体 detection より要求解像度低い)。
+    // 結果: ML latency 約 1/4、発熱 大幅減。
     val yuvSizes = streamMap.getOutputSizes(ImageFormat.YUV_420_888)
-    val targetW = 1280; val targetH = 720
+    val targetW = 640; val targetH = 480
     val pickAnalysis = yuvSizes?.minByOrNull {
       Math.abs(it.width.toLong() * it.height.toLong() - targetW.toLong() * targetH.toLong())
     }
@@ -423,6 +580,13 @@ class CameraSessionController private constructor(private val appContext: Contex
       }
     } else null
     Log.i(TAG, "configureIfNeededInternal: analysis=${pickAnalysis?.let { "${it.width}x${it.height}" } ?: "none"}")
+
+    // Task 06: logical camera の zoom range から最広角値を取得。Pixel 10 等で 0.5x が取れる。
+    val zoomRange = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+      chr.get(CameraCharacteristics.CONTROL_ZOOM_RATIO_RANGE)
+    } else null
+    minZoomRatio = zoomRange?.lower ?: 1.0f
+    Log.i(TAG, "configureIfNeededInternal: zoom range=$zoomRange (using min=${minZoomRatio}x for widest FOV)")
 
     val opened = openCamera(targetId)
     Log.i(TAG, "configureIfNeededInternal: camera opened id=$targetId jpeg=${largestJpeg.width}x${largestJpeg.height} depth=${dSize?.let { "${it.width}x${it.height}" } ?: "none"}")

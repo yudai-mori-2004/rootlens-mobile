@@ -1,5 +1,5 @@
 import type { ComponentType } from 'react';
-import SensorSessionTestScreen from './04-sensor-session/SensorSessionTestScreen';
+import CollectionFlowScreen from './04-collection-flow/CollectionFlowScreen';
 
 export interface SandboxEntry {
   id: string;
@@ -10,9 +10,9 @@ export interface SandboxEntry {
 
 export const sandboxes: SandboxEntry[] = [
   {
-    id: '04-sensor-session',
-    title: '04: SensorSession',
-    description: 'Camera + IMU 同時取得 + mp4 出力 (raw signals for server-side VIO)',
-    screen: SensorSessionTestScreen,
+    id: '04-collection-flow',
+    title: '04: Collection Flow',
+    description: 'タスク選択 → ジェスチャー連動 VLM 開始判定 → 録画 → 終了判定 (sensor-session + hand-pose 経由)',
+    screen: CollectionFlowScreen,
   },
 ];

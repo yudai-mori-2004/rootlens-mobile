@@ -26,6 +26,9 @@ class HandPoseModule : Module() {
   override fun definition() = ModuleDefinition {
     Name("HandPose")
 
+    // gesture state machine 用 live event。frame consumer が ML 完了時に発火。
+    Events("onHandPose")
+
     AsyncFunction("start") { promise: Promise ->
       val ctx = appContext.reactContext
         ?: return@AsyncFunction promise.reject("HAND_POSE_NO_CONTEXT", "RN context unavailable", null)
@@ -35,7 +38,9 @@ class HandPoseModule : Module() {
           return@AsyncFunction
         }
         val det = HandPoseDetector(ctx)
-        val cons = HandPoseFrameConsumer(det)
+        val cons = HandPoseFrameConsumer(det).apply {
+          onFrameReady = { payload -> this@HandPoseModule.sendEvent("onHandPose", payload) }
+        }
         CameraSessionController.get(ctx).attachFrameConsumer(cons)
         detector = det
         consumer = cons
@@ -68,6 +73,23 @@ class HandPoseModule : Module() {
 
     AsyncFunction("droppedCount") {
       consumer?.dropped ?: 0L
+    }
+
+    /**
+     * VLM 用 snapshot: 直近 analysis frame を JPEG として書き出し file:// URI を返す。
+     * hand-pose の start() で frame consumer が attach されている事が前提。
+     */
+    AsyncFunction("captureSnapshot") { promise: Promise ->
+      val ctx = appContext.reactContext
+        ?: return@AsyncFunction promise.reject("HAND_POSE_NO_CONTEXT", "RN context unavailable", null)
+      val cons = consumer
+        ?: return@AsyncFunction promise.reject("HAND_POSE_NOT_STARTED", "hand-pose not started", null)
+      try {
+        val uri = cons.snapshotJpeg(ctx)
+        promise.resolve(uri)
+      } catch (t: Throwable) {
+        promise.reject("HAND_POSE_SNAPSHOT_ERROR", t.message ?: "snapshot failed", t)
+      }
     }
   }
 }
