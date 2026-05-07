@@ -12,12 +12,14 @@ interface Props {
   durationMs: number;
   vlmEnd: VlmResult | null;
   vlmEndError: string | null;
+  canMint: boolean;
+  onMint: () => void;
   onRedo: () => void;
   onBackToList: () => void;
 }
 
 export const ResultView: React.FC<Props> = ({
-  task, videoUri, sidecarUri, endSnapshotUri, durationMs, vlmEnd, vlmEndError, onRedo, onBackToList,
+  task, videoUri, sidecarUri, endSnapshotUri, durationMs, vlmEnd, vlmEndError, canMint, onMint, onRedo, onBackToList,
 }) => {
   const minutes = Math.floor(durationMs / 60000);
   const seconds = Math.floor((durationMs % 60000) / 1000);
@@ -29,7 +31,6 @@ export const ResultView: React.FC<Props> = ({
   return (
     <View style={styles.root}>
       <ScrollView contentContainerStyle={styles.scroll}>
-        {/* Hero: snapshot + task name */}
         {endSnapshotUri ? (
           <Image source={{ uri: endSnapshotUri }} style={styles.snapshot} resizeMode="cover" />
         ) : (
@@ -43,7 +44,6 @@ export const ResultView: React.FC<Props> = ({
           <Text style={styles.taskName}>{task.name}</Text>
         </View>
 
-        {/* Score */}
         {score !== null ? (
           <View style={styles.scoreBox}>
             <Text style={styles.scoreLabel}>End condition score</Text>
@@ -65,7 +65,6 @@ export const ResultView: React.FC<Props> = ({
           </View>
         ) : null}
 
-        {/* Duration + clip artifact paths */}
         <View style={styles.metaRow}>
           <View style={styles.metaItem}>
             <Text style={styles.metaLabel}>Duration</Text>
@@ -86,9 +85,23 @@ export const ResultView: React.FC<Props> = ({
         <Pressable style={styles.backLink} onPress={onBackToList} hitSlop={12}>
           <Text style={styles.backLinkText}>← Tasks</Text>
         </Pressable>
-        <Pressable style={({ pressed }) => [styles.cta, pressed && styles.ctaPressed]} onPress={onRedo}>
-          <Text style={styles.ctaLabel}>Record again</Text>
-        </Pressable>
+        <View style={styles.barActions}>
+          <Pressable
+            style={({ pressed }) => [styles.secondary, pressed && styles.secondaryPressed]}
+            onPress={onRedo}
+          >
+            <Text style={styles.secondaryLabel}>Record again</Text>
+          </Pressable>
+          <Pressable
+            style={({ pressed }) => [styles.cta, !canMint && styles.ctaDisabled, pressed && canMint && styles.ctaPressed]}
+            onPress={onMint}
+            disabled={!canMint}
+          >
+            <Text style={[styles.ctaLabel, !canMint && styles.ctaLabelDisabled]}>
+              Mint Core NFT →
+            </Text>
+          </Pressable>
+        </View>
       </View>
     </View>
   );
@@ -224,21 +237,43 @@ const styles = StyleSheet.create({
     paddingBottom: space.xl,
     backgroundColor: colors.bgWhite,
     ...hairline('top'),
-    gap: space.l,
+    gap: space.m,
   },
   backLink: { paddingVertical: space.s },
   backLinkText: { ...type.body, color: colors.textInk, fontWeight: '500' },
+  barActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.s,
+  },
+  secondary: {
+    paddingHorizontal: space.l,
+    paddingVertical: space.m,
+    borderRadius: radius.s,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.bgWhite,
+  },
+  secondaryPressed: { backgroundColor: colors.bgWarm },
+  secondaryLabel: {
+    color: colors.textInk,
+    fontFamily: fonts.displayMedium,
+    fontSize: 13,
+    letterSpacing: 0.2,
+  },
   cta: {
     backgroundColor: colors.bgInk,
-    paddingHorizontal: space.xxl,
+    paddingHorizontal: space.l,
     paddingVertical: space.m,
     borderRadius: radius.s,
   },
   ctaPressed: { backgroundColor: colors.bgInkSoft },
+  ctaDisabled: { backgroundColor: colors.border },
   ctaLabel: {
     color: colors.textOnInk,
     fontFamily: fonts.displayMedium,
-    fontSize: 15,
+    fontSize: 14,
     letterSpacing: 0.2,
   },
+  ctaLabelDisabled: { color: colors.textFaint },
 });

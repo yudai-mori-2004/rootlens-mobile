@@ -26,12 +26,6 @@ import {
 } from '../../../native/handPose';
 import { signMp4, isC2paAvailable } from '../../../native/c2paBridge';
 import { DEV_CHAIN_PEM, DEV_DEVICE_KEY_PEM } from '../../../native/devCerts';
-import { registerOnTitleProtocol } from '../../../services/titleProtocol';
-
-// Demo mode: Privy login をパスして固定 wallet pubkey を使う。
-// .env の EXPO_PUBLIC_DEMO_WALLET_ADDRESS が空なら TP register は skip。
-const DEMO_WALLET_ADDRESS =
-  (process.env as Record<string, string | undefined>).EXPO_PUBLIC_DEMO_WALLET_ADDRESS ?? '';
 import { HandPoseOverlay } from '../../01-hand-pose-gesture/HandPoseOverlay';
 import {
   evaluateTaskGate,
@@ -84,7 +78,6 @@ export const CaptureView: React.FC<Props> = ({ task, onComplete, onCancel }) => 
   const [state, dispatch] = useReducer(captureReducer, initialCaptureSub);
   const [hands, setHands] = useState<HandPoseFrame['hands']>([]);
   const [previewSize, setPreviewSize] = useState({ width: 0, height: 0 });
-  const walletAddress = DEMO_WALLET_ADDRESS;
 
   const [vlmStartFeedback, setVlmStartFeedback] = useState<{ reason: string; score: number } | null>(null);
 
@@ -310,23 +303,8 @@ export const CaptureView: React.FC<Props> = ({ task, onComplete, onCancel }) => 
         console.log('[CaptureView] C2PA signing skipped (devCerts.ts is empty — run scripts/gen-dev-certs.sh)');
       }
 
-      // 7) Title Protocol 登録 (Privy Solana wallet が attached かつ signed mp4 がある時のみ)
-      //    delegateMint:true で TP Gateway が Solana broadcast まで完了。result の
-      //    contentHash + txSignature を sidecar.trust に追記する想定。
-      //    アプリ側で持つ鍵は無い (C2PA dev cert は task 07 のもの、Privy wallet は SDK 内)。
-      if (videoUri && walletAddress) {
-        try {
-          const cleanPath = videoUri.replace(/^file:\/\//, '');
-          const tp = await registerOnTitleProtocol(cleanPath, walletAddress, 'RootLens', 'video');
-          console.log('[CaptureView] TP register OK:', tp);
-          // sidecar.trust への書き戻しは別パス: server-side で TP の最新状態を引いて
-          // 結合する想定なので、ここでは log + result で onComplete 側に伝える。
-        } catch (err) {
-          console.warn('[CaptureView] TP register failed (clip is still saved locally):', err);
-        }
-      } else if (videoUri && !walletAddress) {
-        console.log('[CaptureView] TP register skipped (no Privy wallet — sign in from Home)');
-      }
+      // Title Protocol 登録は撮影フェーズでは実行しない。
+      // 採点後に Result 画面で「Core NFT 発行」CTA を押した時に走る。
 
       if (cancelled) return;
       const durationMs = recordingStartTsRef.current ? Date.now() - recordingStartTsRef.current : 0;

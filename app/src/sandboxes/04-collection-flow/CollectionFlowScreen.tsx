@@ -5,7 +5,11 @@ import { TaskListView } from './components/TaskListView';
 import { BriefView } from './components/BriefView';
 import { CaptureView } from './components/CaptureView';
 import { ResultView } from './components/ResultView';
+import { MintView } from './components/MintView';
 import { findTask } from './tasks';
+
+const DEMO_WALLET_ADDRESS =
+  (process.env as Record<string, string | undefined>).EXPO_PUBLIC_DEMO_WALLET_ADDRESS ?? '';
 import { colors, fonts, radius, space, type } from './theme';
 import type { VlmResult } from '../02-vlm-task-gate/vlmClient';
 
@@ -16,20 +20,21 @@ import type { VlmResult } from '../02-vlm-task-gate/vlmClient';
 // Modes:
 //   task_list → brief → capture → result → (back to list or record again)
 
+interface ResultPayload {
+  videoUri: string | null;
+  sidecarUri: string | null;
+  endSnapshotUri: string | null;
+  durationMs: number;
+  vlmEnd: VlmResult | null;
+  vlmEndError: string | null;
+}
+
 type Mode =
   | { kind: 'task_list' }
   | { kind: 'brief'; taskId: string }
   | { kind: 'capture'; taskId: string }
-  | {
-      kind: 'result';
-      taskId: string;
-      videoUri: string | null;
-      sidecarUri: string | null;
-      endSnapshotUri: string | null;
-      durationMs: number;
-      vlmEnd: VlmResult | null;
-      vlmEndError: string | null;
-    };
+  | ({ kind: 'result'; taskId: string } & ResultPayload)
+  | ({ kind: 'mint'; taskId: string } & ResultPayload);
 
 export default function CollectionFlowScreen() {
   const [mode, setMode] = useState<Mode>({ kind: 'task_list' });
@@ -94,6 +99,18 @@ export default function CollectionFlowScreen() {
     setMode({ kind: 'task_list' });
   }, []);
 
+  const handleGoToMint = useCallback(() => {
+    if (mode.kind !== 'result') return;
+    const { taskId, videoUri, sidecarUri, endSnapshotUri, durationMs, vlmEnd, vlmEndError } = mode;
+    setMode({ kind: 'mint', taskId, videoUri, sidecarUri, endSnapshotUri, durationMs, vlmEnd, vlmEndError });
+  }, [mode]);
+
+  const handleBackToResult = useCallback(() => {
+    if (mode.kind !== 'mint') return;
+    const { taskId, videoUri, sidecarUri, endSnapshotUri, durationMs, vlmEnd, vlmEndError } = mode;
+    setMode({ kind: 'result', taskId, videoUri, sidecarUri, endSnapshotUri, durationMs, vlmEnd, vlmEndError });
+  }, [mode]);
+
   if (permission === 'pending') {
     return (
       <View style={styles.center}>
@@ -146,8 +163,23 @@ export default function CollectionFlowScreen() {
           durationMs={mode.durationMs}
           vlmEnd={mode.vlmEnd}
           vlmEndError={mode.vlmEndError}
+          canMint={!!mode.videoUri && !!DEMO_WALLET_ADDRESS}
+          onMint={handleGoToMint}
           onRedo={handleRedo}
           onBackToList={handleBackToList}
+        />
+      );
+    }
+    case 'mint': {
+      const task = findTask(mode.taskId);
+      if (!task) return <UnknownTask onBack={handleBackToList} />;
+      return (
+        <MintView
+          task={task}
+          videoUri={mode.videoUri}
+          score={mode.vlmEnd?.score ?? null}
+          onDone={handleBackToList}
+          onCancel={handleBackToResult}
         />
       );
     }
